@@ -30,13 +30,13 @@ chmod +x "$SCRIPT_DIR"/*.sh
 
 **2. Set environment variables:**
 
-The skill requires three environment variables. Ask your user for these if they haven't provided them:
+The skill requires two environment variables. Ask your user for these if they haven't provided them:
 
-| Variable | What it is | Where to find it |
-|----------|-----------|-----------------|
-| `WITHINGS_CLIENT_ID` | OAuth2 client ID | Withings Developer Dashboard > App settings |
-| `WITHINGS_CLIENT_SECRET` | OAuth2 client secret | Withings Developer Dashboard > App settings |
-| `WITHINGS_TOKEN_FILE` | Path to store tokens (default: `~/.withings-tokens`) | Configurable |
+| Variable | Required | What it is | Where to find it |
+|----------|----------|-----------|-----------------|
+| `WITHINGS_CLIENT_ID` | Yes | OAuth2 client ID | Withings Developer Dashboard > App settings |
+| `WITHINGS_CLIENT_SECRET` | Yes | OAuth2 client secret | Withings Developer Dashboard > App settings |
+| `WITHINGS_TOKEN_FILE` | No | Path to store tokens (default: `~/.withings-tokens`) | Configurable |
 
 Set them in `~/.openclaw/.env` or in your agent's environment.
 

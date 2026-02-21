@@ -8,68 +8,80 @@
 #   --days N  Measurements from the last N days (default: 7)
 #
 # Requires: curl, jq
-# Environment: WITHINGS_CLIENT_ID, WITHINGS_CLIENT_SECRET, WITHINGS_TOKEN_FILE
+# Environment: WITHINGS_CLIENT_ID, WITHINGS_CLIENT_SECRET
 
 set -euo pipefail
+
+# --- Dependency checks ---
+
+for cmd in curl jq; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: Required command '$cmd' not found. Install it and try again." >&2
+    exit 1
+  fi
+done
+
+# --- Configuration ---
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 API_BASE="https://wbsapi.withings.net"
 
+# Measurement type map (single source of truth)
+MEAS_TYPES='{
+  "1":  {"name": "Weight",        "unit": "kg"},
+  "5":  {"name": "Fat-Free Mass", "unit": "kg"},
+  "6":  {"name": "Fat Ratio",     "unit": "%"},
+  "8":  {"name": "Fat Mass",      "unit": "kg"},
+  "76": {"name": "Muscle Mass",   "unit": "kg"},
+  "77": {"name": "Hydration",     "unit": "kg"},
+  "88": {"name": "Bone Mass",     "unit": "kg"}
+}'
+
+# --- Argument parsing ---
+
 OUTPUT_MODE="formatted"
 DAYS=7
 
-for arg in "$@"; do
-  case "$arg" in
-    --raw)    OUTPUT_MODE="raw" ;;
-    --json)   OUTPUT_MODE="json" ;;
-    --days)   shift_next=true ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --raw)    OUTPUT_MODE="raw"; shift ;;
+    --json)   OUTPUT_MODE="json"; shift ;;
+    --days)
+      shift
+      if [[ $# -eq 0 ]] || [[ "$1" == --* ]]; then
+        echo "Error: --days requires a numeric value." >&2
+        exit 1
+      fi
+      DAYS="$1"; shift ;;
+    --days=*)
+      DAYS="${1#--days=}"; shift ;;
     --help|-h)
       echo "Usage: $0 [--raw] [--json] [--days N]"
       echo "  --raw     Output raw JSON from the API"
       echo "  --json    Output parsed JSON with readable values"
       echo "  --days N  Measurements from last N days (default: 7)"
       echo ""
-      echo "Environment: WITHINGS_CLIENT_ID, WITHINGS_CLIENT_SECRET, WITHINGS_TOKEN_FILE"
+      echo "Environment: WITHINGS_CLIENT_ID, WITHINGS_CLIENT_SECRET"
       exit 0
       ;;
-    *)
-      if [ "${shift_next:-}" = "true" ]; then
-        DAYS="$arg"
-        shift_next=false
-      else
-        echo "Unknown option: $arg" >&2
-        exit 1
-      fi
-      ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+# Validate --days is a positive integer
+if ! [[ "$DAYS" =~ ^[0-9]+$ ]] || [ "$DAYS" -eq 0 ]; then
+  echo "Error: --days must be a positive integer, got '$DAYS'." >&2
+  exit 1
+fi
 
 # --- Helper functions ---
 
 meas_type_name() {
-  case "$1" in
-    1)  echo "Weight" ;;
-    5)  echo "Fat-Free Mass" ;;
-    6)  echo "Fat Ratio" ;;
-    8)  echo "Fat Mass" ;;
-    76) echo "Muscle Mass" ;;
-    77) echo "Hydration" ;;
-    88) echo "Bone Mass" ;;
-    *)  echo "Unknown ($1)" ;;
-  esac
+  echo "$MEAS_TYPES" | jq -r --arg t "$1" '.[$t].name // "Unknown (\($t))"'
 }
 
 meas_type_unit() {
-  case "$1" in
-    1)  echo "kg" ;;
-    5)  echo "kg" ;;
-    6)  echo "%" ;;
-    8)  echo "kg" ;;
-    76) echo "kg" ;;
-    77) echo "kg" ;;
-    88) echo "kg" ;;
-    *)  echo "" ;;
-  esac
+  echo "$MEAS_TYPES" | jq -r --arg t "$1" '.[$t].unit // ""'
 }
 
 # Convert raw value + unit exponent to actual value
@@ -79,40 +91,93 @@ convert_value() {
   echo "$value $unit" | awk '{printf "%.1f", $1 * (10 ^ $2)}'
 }
 
+# Portable date helpers
+date_seconds_ago() {
+  local days="$1"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    date "-v-${days}d" +%s
+  else
+    date -d "-${days} days" +%s
+  fi
+}
+
+date_format_ts() {
+  local ts="$1" fmt="$2"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    date -r "$ts" "+$fmt"
+  else
+    date -d "@$ts" "+$fmt"
+  fi
+}
+
 # --- Get access token ---
 
-ACCESS_TOKEN=$("$SCRIPT_DIR/withings-auth.sh" token) || {
-  echo "Error: Failed to get access token. Run 'withings-auth.sh setup' to authorize." >&2
-  exit 1
-}
+ACCESS_TOKEN=$("$SCRIPT_DIR/withings-auth.sh" token) || exit 1
 
 # --- Calculate date range ---
 
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  START_DATE=$(date -v-${DAYS}d +%s)
-else
-  START_DATE=$(date -d "-${DAYS} days" +%s)
-fi
+START_DATE=$(date_seconds_ago "$DAYS")
 END_DATE=$(date +%s)
 
-# --- Fetch measurements ---
+# --- Fetch measurements (with pagination) ---
 
-RESPONSE=$(curl -s -X POST "${API_BASE}/measure" \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -d "action=getmeas" \
-  -d "meastypes=1,5,6,8,76,77,88" \
-  -d "category=1" \
-  -d "startdate=${START_DATE}" \
-  -d "enddate=${END_DATE}" \
-  --max-time 30)
+ALL_GRPS="[]"
+OFFSET=0
+TIMEZONE=""
+UPDATETIME=""
 
-# Check for API errors
-STATUS=$(echo "$RESPONSE" | jq -r '.status')
-if [ "$STATUS" != "0" ]; then
-  echo "Error: Withings API returned status $STATUS" >&2
-  echo "$RESPONSE" | jq . >&2
-  exit 1
-fi
+while true; do
+  RESPONSE=$(curl -s -X POST "${API_BASE}/measure" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+    -d "action=getmeas" \
+    -d "meastypes=1,5,6,8,76,77,88" \
+    -d "category=1" \
+    -d "startdate=${START_DATE}" \
+    -d "enddate=${END_DATE}" \
+    -d "offset=${OFFSET}" \
+    --max-time 30)
+
+  # Validate response is JSON
+  if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
+    echo "Error: Invalid response from Withings API (network error?)." >&2
+    exit 1
+  fi
+
+  # Check for API errors
+  STATUS=$(echo "$RESPONSE" | jq -r '.status')
+  if [ "$STATUS" != "0" ]; then
+    local_error=$(echo "$RESPONSE" | jq -r '.error // empty')
+    echo "Error: Withings API returned status $STATUS${local_error:+: $local_error}" >&2
+    exit 1
+  fi
+
+  # Capture metadata from first page
+  if [ "$OFFSET" -eq 0 ]; then
+    TIMEZONE=$(echo "$RESPONSE" | jq -r '.body.timezone // empty')
+    UPDATETIME=$(echo "$RESPONSE" | jq -r '.body.updatetime // empty')
+  fi
+
+  # Accumulate measurement groups
+  PAGE_GRPS=$(echo "$RESPONSE" | jq '(.body.measuregrps // [])')
+  ALL_GRPS=$(echo "$ALL_GRPS" "$PAGE_GRPS" | jq -s '.[0] + .[1]')
+
+  # Check for more pages
+  MORE=$(echo "$RESPONSE" | jq -r '.body.more // 0')
+  if [ "$MORE" != "1" ]; then
+    break
+  fi
+  OFFSET=$(echo "$RESPONSE" | jq -r '.body.offset')
+done
+
+# Reconstruct a response-like structure for downstream processing
+RESPONSE=$(echo "$ALL_GRPS" | jq --arg tz "$TIMEZONE" --arg ut "$UPDATETIME" '{
+  status: 0,
+  body: {
+    timezone: $tz,
+    updatetime: ($ut | tonumber? // 0),
+    measuregrps: .
+  }
+}')
 
 # --- Output ---
 
@@ -121,9 +186,9 @@ if [ "$OUTPUT_MODE" = "raw" ]; then
   exit 0
 fi
 
-# Parse measurements into readable format
+# Parse measurements into readable format (with null guard)
 PARSED=$(echo "$RESPONSE" | jq -r '
-  .body.measuregrps
+  (.body.measuregrps // [])
   | sort_by(-.date)
   | map({
       date: (.date | todate),
@@ -138,16 +203,7 @@ PARSED=$(echo "$RESPONSE" | jq -r '
 ')
 
 if [ "$OUTPUT_MODE" = "json" ]; then
-  # Output parsed JSON with type names
-  echo "$PARSED" | jq --argjson types '{
-    "1": {"name": "Weight", "unit": "kg"},
-    "5": {"name": "Fat-Free Mass", "unit": "kg"},
-    "6": {"name": "Fat Ratio", "unit": "%"},
-    "8": {"name": "Fat Mass", "unit": "kg"},
-    "76": {"name": "Muscle Mass", "unit": "kg"},
-    "77": {"name": "Hydration", "unit": "kg"},
-    "88": {"name": "Bone Mass", "unit": "kg"}
-  }' '
+  echo "$PARSED" | jq --argjson types "$MEAS_TYPES" '
     map({
       date,
       timestamp,
@@ -164,7 +220,7 @@ fi
 
 # --- Formatted output ---
 
-GRP_COUNT=$(echo "$RESPONSE" | jq '.body.measuregrps | length')
+GRP_COUNT=$(echo "$RESPONSE" | jq '(.body.measuregrps // []) | length')
 
 if [ "$GRP_COUNT" -eq 0 ]; then
   echo "No measurements found in the last ${DAYS} days."
@@ -178,18 +234,14 @@ echo "============================================"
 
 # Process each measurement group (most recent first)
 for i in $(seq 0 $((GRP_COUNT - 1))); do
-  GRP=$(echo "$RESPONSE" | jq ".body.measuregrps | sort_by(-.date) | .[$i]")
+  GRP=$(echo "$RESPONSE" | jq "(.body.measuregrps // []) | sort_by(-.date) | .[$i]")
   DATE_TS=$(echo "$GRP" | jq -r '.date')
 
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    DATE_FMT=$(date -r "$DATE_TS" '+%Y-%m-%d %H:%M')
-  else
-    DATE_FMT=$(date -d "@$DATE_TS" '+%Y-%m-%d %H:%M')
-  fi
+  DATE_FMT=$(date_format_ts "$DATE_TS" '%Y-%m-%d %H:%M')
 
   echo ""
   echo "  $DATE_FMT"
-  echo "  ────────────────────────────────────"
+  echo "  ------------------------------------"
 
   MEAS_COUNT=$(echo "$GRP" | jq '.measures | length')
   for j in $(seq 0 $((MEAS_COUNT - 1))); do
@@ -207,17 +259,16 @@ done
 
 # Calculate weight summary if multiple groups
 WEIGHT_VALUES=$(echo "$RESPONSE" | jq -r '
-  [.body.measuregrps[].measures[] | select(.type == 1) | .value * pow(10; .unit)]
+  [(.body.measuregrps // [])[].measures[] | select(.type == 1) | .value * pow(10; .unit)]
   | if length > 0 then . else empty end
-' 2>/dev/null)
+') || true
 
 if [ -n "$WEIGHT_VALUES" ]; then
   WEIGHT_STATS=$(echo "$WEIGHT_VALUES" | jq '{
     count: length,
     avg: (add / length),
     min: min,
-    max: max,
-    latest: .[0]
+    max: max
   }')
 
   COUNT=$(echo "$WEIGHT_STATS" | jq -r '.count')
@@ -227,7 +278,7 @@ if [ -n "$WEIGHT_VALUES" ]; then
     MAX=$(echo "$WEIGHT_STATS" | jq -r '.max | . * 10 | round / 10')
     echo ""
     echo "  ${DAYS}-Day Weight Summary"
-    echo "  ────────────────────────────────────"
+    echo "  ------------------------------------"
     printf "    %-16s %8s kg\n" "Average" "$AVG"
     printf "    %-16s %8s kg\n" "Range" "${MIN} - ${MAX}"
     printf "    %-16s %8s\n" "Measurements" "$COUNT"

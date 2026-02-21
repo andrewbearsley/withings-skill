@@ -3,7 +3,7 @@ name: bathroom-scales
 description: Monitor body measurements from Withings bathroom scales via the Withings API.
 version: 1.0.0
 homepage: https://github.com/andrewbearsley/openclaw-withings
-metadata: {"openclaw": {"requires": {"bins": ["curl", "jq"], "env": ["WITHINGS_CLIENT_ID", "WITHINGS_CLIENT_SECRET", "WITHINGS_TOKEN_FILE"]}, "primaryEnv": "WITHINGS_CLIENT_ID"}}
+metadata: {"openclaw": {"requires": {"bins": ["curl", "jq"], "env": ["WITHINGS_CLIENT_ID", "WITHINGS_CLIENT_SECRET"]}, "primaryEnv": "WITHINGS_CLIENT_ID"}}
 ---
 
 # Bathroom Scales Skill
@@ -67,10 +67,15 @@ The API can fail in several ways. Handle each:
 Returns body measurements for the authenticated user.
 
 ```bash
+# Easiest: use the helper script
+scripts/withings-status.sh --json --days 7
+
+# Or call the API directly:
 ACCESS_TOKEN=$(scripts/withings-auth.sh token)
+START=$(date +%s); START=$((START - 7*86400))
 curl -s -X POST https://wbsapi.withings.net/measure \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -d "action=getmeas&meastypes=1,5,6,8,76,77,88&category=1&lastupdate=$(date -v-7d +%s)"
+  -d "action=getmeas&meastypes=1,5,6,8,76,77,88&category=1&startdate=$START&enddate=$(date +%s)"
 ```
 
 **Parameters:**

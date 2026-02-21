@@ -8,9 +8,20 @@
 #   ./withings-auth.sh token    Output a valid access token (auto-refreshes if expired)
 #
 # Requires: curl, jq
-# Environment: WITHINGS_CLIENT_ID, WITHINGS_CLIENT_SECRET, WITHINGS_TOKEN_FILE
+# Environment: WITHINGS_CLIENT_ID, WITHINGS_CLIENT_SECRET
 
 set -euo pipefail
+
+# --- Dependency checks ---
+
+for cmd in curl jq; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: Required command '$cmd' not found. Install it and try again." >&2
+    exit 1
+  fi
+done
+
+# --- Configuration ---
 
 API_BASE="https://wbsapi.withings.net"
 AUTH_URL="https://account.withings.com/oauth2_user/authorize2"
@@ -24,16 +35,30 @@ WITHINGS_REDIRECT_URI="${WITHINGS_REDIRECT_URI:-http://localhost:9876/callback}"
 
 save_tokens() {
   local access_token="$1" refresh_token="$2" expires_in="$3" user_id="$4"
+
+  # Validate fields before saving
+  if [ "$access_token" = "null" ] || [ -z "$access_token" ]; then
+    echo "Error: API response missing access_token" >&2
+    return 1
+  fi
+  if [ "$refresh_token" = "null" ] || [ -z "$refresh_token" ]; then
+    echo "Error: API response missing refresh_token" >&2
+    return 1
+  fi
+
   local expires_at=$(($(date +%s) + expires_in))
 
-  jq -n \
-    --arg at "$access_token" \
-    --arg rt "$refresh_token" \
-    --arg ea "$expires_at" \
-    --arg uid "$user_id" \
-    '{access_token: $at, refresh_token: $rt, expires_at: ($ea | tonumber), user_id: $uid}' \
-    > "$WITHINGS_TOKEN_FILE"
-  chmod 600 "$WITHINGS_TOKEN_FILE"
+  # Use umask to create file with 600 permissions from the start
+  (
+    umask 077
+    jq -n \
+      --arg at "$access_token" \
+      --arg rt "$refresh_token" \
+      --arg ea "$expires_at" \
+      --arg uid "$user_id" \
+      '{access_token: $at, refresh_token: $rt, expires_at: ($ea | tonumber), user_id: $uid}' \
+      > "$WITHINGS_TOKEN_FILE"
+  )
 }
 
 load_tokens() {
@@ -42,7 +67,28 @@ load_tokens() {
     echo "Run '$0 setup' to authorize with Withings first." >&2
     return 1
   fi
-  cat "$WITHINGS_TOKEN_FILE"
+
+  # Check file permissions
+  local perms
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    perms=$(stat -f '%Lp' "$WITHINGS_TOKEN_FILE")
+  else
+    perms=$(stat -c '%a' "$WITHINGS_TOKEN_FILE")
+  fi
+  if [ "$perms" != "600" ]; then
+    echo "Warning: Token file has insecure permissions ($perms), fixing to 600." >&2
+    chmod 600 "$WITHINGS_TOKEN_FILE"
+  fi
+
+  # Validate structure
+  local tokens
+  tokens=$(cat "$WITHINGS_TOKEN_FILE")
+  if ! echo "$tokens" | jq -e '.access_token and .refresh_token and .expires_at' >/dev/null 2>&1; then
+    echo "Error: Token file is corrupted or incomplete. Re-run '$0 setup'." >&2
+    return 1
+  fi
+
+  echo "$tokens"
 }
 
 is_token_expired() {
@@ -56,11 +102,19 @@ is_token_expired() {
 
 check_api_status() {
   local response="$1" context="$2"
+
+  # Check response is valid JSON
+  if ! echo "$response" | jq empty 2>/dev/null; then
+    echo "Error: Invalid response from Withings API during $context (network error?)" >&2
+    return 1
+  fi
+
   local status
   status=$(echo "$response" | jq -r '.status')
   if [ "$status" != "0" ]; then
-    echo "Error: Withings API returned status $status during $context" >&2
-    echo "$response" | jq . >&2
+    local error
+    error=$(echo "$response" | jq -r '.error // empty')
+    echo "Error: Withings API returned status $status during $context${error:+: $error}" >&2
     return 1
   fi
 }
@@ -68,24 +122,36 @@ check_api_status() {
 # --- Commands ---
 
 do_setup() {
-  echo "Withings OAuth2 Setup"
-  echo "====================="
-  echo ""
-  echo "1. Open the following URL in your browser:"
-  echo ""
-  echo "   ${AUTH_URL}?response_type=code&client_id=${WITHINGS_CLIENT_ID}&redirect_uri=${WITHINGS_REDIRECT_URI}&scope=user.metrics&state=openclaw"
-  echo ""
-  echo "2. Log in and authorize the application."
-  echo "3. You'll be redirected to a URL like:"
-  echo "   ${WITHINGS_REDIRECT_URI}?code=XXXXX&state=openclaw"
-  echo ""
-  echo "   (The page won't load — that's expected. Copy the URL from your browser's address bar.)"
-  echo ""
+  local state
+  state=$(openssl rand -hex 16)
+
+  echo "Withings OAuth2 Setup" >&2
+  echo "=====================" >&2
+  echo "" >&2
+  echo "1. Open the following URL in your browser:" >&2
+  echo "" >&2
+  echo "   ${AUTH_URL}?response_type=code&client_id=${WITHINGS_CLIENT_ID}&redirect_uri=${WITHINGS_REDIRECT_URI}&scope=user.metrics&state=${state}" >&2
+  echo "" >&2
+  echo "2. Log in and authorize the application." >&2
+  echo "3. You'll be redirected to a URL like:" >&2
+  echo "   ${WITHINGS_REDIRECT_URI}?code=XXXXX&state=..." >&2
+  echo "" >&2
+  echo "   (The page won't load, that's expected. Copy the URL from your browser's address bar.)" >&2
+  echo "" >&2
   read -rp "Paste the full redirect URL here: " redirect_url
 
-  # Extract the authorization code from the URL
+  # Validate state parameter
+  local returned_state
+  returned_state=$(echo "$redirect_url" | sed -n 's/.*[?&]state=\([^&#]*\).*/\1/p')
+  if [ "$returned_state" != "$state" ]; then
+    echo "Error: State parameter mismatch. Expected '$state', got '$returned_state'." >&2
+    echo "This could indicate a CSRF attack or a stale URL. Try again." >&2
+    return 1
+  fi
+
+  # Extract the authorization code (strip fragments)
   local code
-  code=$(echo "$redirect_url" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
+  code=$(echo "$redirect_url" | sed -n 's/.*[?&]code=\([^&#]*\).*/\1/p')
 
   if [ -z "$code" ]; then
     echo "Error: Could not extract authorization code from URL." >&2
@@ -93,8 +159,8 @@ do_setup() {
     return 1
   fi
 
-  echo ""
-  echo "Exchanging authorization code for tokens..."
+  echo "" >&2
+  echo "Exchanging authorization code for tokens..." >&2
 
   local response
   response=$(curl -s -X POST "${API_BASE}/v2/oauth2" \
@@ -114,11 +180,11 @@ do_setup() {
   expires_in=$(echo "$response" | jq -r '.body.expires_in')
   user_id=$(echo "$response" | jq -r '.body.userid')
 
-  save_tokens "$access_token" "$refresh_token" "$expires_in" "$user_id"
+  save_tokens "$access_token" "$refresh_token" "$expires_in" "$user_id" || return 1
 
-  echo "Success! Tokens saved to $WITHINGS_TOKEN_FILE"
-  echo "  User ID:    $user_id"
-  echo "  Expires in: ${expires_in}s (~$((expires_in / 3600))h)"
+  echo "Success! Tokens saved to $WITHINGS_TOKEN_FILE" >&2
+  echo "  User ID:    $user_id" >&2
+  echo "  Expires in: ${expires_in}s (~$((expires_in / 3600))h)" >&2
 }
 
 do_refresh() {
@@ -145,7 +211,7 @@ do_refresh() {
   expires_in=$(echo "$response" | jq -r '.body.expires_in')
   user_id=$(echo "$response" | jq -r '.body.userid')
 
-  save_tokens "$access_token" "$new_refresh_token" "$expires_in" "$user_id"
+  save_tokens "$access_token" "$new_refresh_token" "$expires_in" "$user_id" || return 1
 
   echo "Token refreshed successfully." >&2
   echo "  Expires in: ${expires_in}s (~$((expires_in / 3600))h)" >&2
@@ -182,6 +248,7 @@ case "${1:-}" in
     echo "  WITHINGS_CLIENT_SECRET  Withings developer app client secret"
     echo "  WITHINGS_TOKEN_FILE     Path to token file (default: ~/.withings-tokens)"
     echo "  WITHINGS_REDIRECT_URI   OAuth redirect URI (default: http://localhost:9876/callback)"
+    exit 0
     ;;
   *)
     echo "Usage: $0 {setup|refresh|token}" >&2
