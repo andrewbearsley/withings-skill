@@ -57,6 +57,7 @@ The API can fail in several ways. Handle each:
 | No measurements returned | Scale hasn't synced, or wrong user_id | Check the scale has synced recently in the Withings app |
 | "Invalid params" error | Missing or wrong meastypes | Check the API call includes `meastypes=1,5,6,8,76,77,88` |
 | Token file not found | OAuth setup not completed | Run `withings-auth.sh setup` |
+| "WITHINGS_CLIENT_ID environment variable is not set" | Credentials not loaded — the refresh token is likely still valid | Don't tell the user to re-authenticate. Alert: "Withings credentials not available — check that WITHINGS_CLIENT_ID and WITHINGS_CLIENT_SECRET are set in the environment." |
 
 ---
 
