@@ -2,7 +2,7 @@
 name: bathroom-scales
 description: Monitor body measurements from Withings bathroom scales via the Withings API.
 version: 1.0.0
-homepage: https://github.com/andrewbearsley/openclaw-withings
+homepage: https://github.com/andrewbearsley/withings-skill
 metadata: {"openclaw": {"requires": {"bins": ["curl", "jq"], "env": ["WITHINGS_CLIENT_ID", "WITHINGS_CLIENT_SECRET"]}, "primaryEnv": "WITHINGS_CLIENT_ID"}}
 ---
 

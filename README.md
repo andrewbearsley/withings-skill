@@ -2,7 +2,7 @@
 
 ![Format](https://img.shields.io/badge/format-Agent%20Skill-blue)
 ![Bash](https://img.shields.io/badge/bash-%23121011?logo=gnu-bash&logoColor=white)
-![License](https://img.shields.io/github/license/andrewbearsley/openclaw-withings)
+![License](https://img.shields.io/github/license/andrewbearsley/withings-skill)
 
 Monitor body measurements from Withings bathroom scales (Body, Body+, Body Comp, Body Scan) via the [Withings API](https://developer.withings.com/). Built as an [OpenClaw](https://openclaw.ai) skill, but the scripts work fine standalone too.
 
@@ -17,7 +17,7 @@ If you're an AI agent and your user has pointed you at this repo, here's how to 
 **1. Download the skill and scripts:**
 
 ```bash
-REPO="https://raw.githubusercontent.com/andrewbearsley/openclaw-withings/main"
+REPO="https://raw.githubusercontent.com/andrewbearsley/withings-skill/main"
 SKILL_DIR="$HOME/.openclaw/skills/bathroom-scales"
 SCRIPT_DIR="$SKILL_DIR/scripts"
 
