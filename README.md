@@ -6,7 +6,7 @@
 
 Monitor body measurements from Withings bathroom scales (Body, Body+, Body Comp, Body Scan) via the [Withings API](https://developer.withings.com/). Built as an [OpenClaw](https://openclaw.ai) skill, but the scripts work fine standalone too.
 
-Tracks weight, body fat %, fat mass, fat-free mass, muscle mass, bone mass, and hydration. Measurements sync from the scale via Wi-Fi to the Withings cloud; the skill queries the API to retrieve them.
+Tracks weight, body fat %, muscle mass, bone mass, and hydration. Measurements sync from the scale over Wi-Fi to the Withings cloud; the skill queries the API to pull them down.
 
 ## Agent quick-start
 
@@ -46,7 +46,7 @@ Set them in `~/.openclaw/.env` or in your agent's environment.
 $SCRIPT_DIR/withings-auth.sh setup
 ```
 
-The user will need to open a URL in their browser, authorize the app, and paste back the redirect URL.
+The user opens a URL in their browser, authorizes the app, and pastes back the redirect URL.
 
 **4. Verify it works:**
 
@@ -62,14 +62,14 @@ $SCRIPT_DIR/withings-status.sh --json
 
 ## What it does
 
-- Latest body measurements (weight, body fat %, fat mass, muscle mass, bone mass, hydration)
-- Historical data with configurable date ranges
-- Heartbeat monitoring that only alerts when something's noteworthy
+- Latest body measurements (weight, body fat %, muscle mass, bone mass, hydration)
+- Historical data over configurable date ranges
+- Heartbeat monitoring that stays quiet unless something's noteworthy
 - Automatic token refresh (3-hour access tokens, rotated refresh tokens)
 
 ## Human setup
 
-These steps need to be done by a human before the agent can use the skill.
+You'll need to do these steps before the agent can use the skill.
 
 ### 1. Create a Withings developer app
 
@@ -92,7 +92,7 @@ export WITHINGS_CLIENT_SECRET=your_client_secret
 ./scripts/withings-auth.sh setup
 ```
 
-Follow the prompts: open the URL, log in, authorize, paste back the redirect URL.
+Follow the prompts: open the URL, log in, authorize, paste the redirect URL back.
 
 ### 3. Give your agent the credentials
 
@@ -158,16 +158,16 @@ All thresholds are configurable in `SKILL.md`. The skill stays quiet when everyt
 
 ## Rate limits
 
-The Withings API allows 120 requests per minute. This is not a concern for typical skill usage.
+The Withings API allows 120 requests per minute. Not a concern for this use case.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `skills/bathroom-scales/SKILL.md` | Skill definition — full API reference, alert thresholds, agent instructions |
+| `skills/bathroom-scales/SKILL.md` | Skill definition: API reference, alert thresholds, agent instructions |
 | `scripts/withings-auth.sh` | OAuth2 setup and token management |
 | `scripts/withings-status.sh` | Query body measurements |
-| `HEARTBEAT.md` | Example heartbeat config |
+| `HEARTBEAT.md` | Heartbeat config template |
 
 ## License
 

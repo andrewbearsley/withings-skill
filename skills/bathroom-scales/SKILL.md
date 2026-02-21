@@ -13,7 +13,7 @@ You can monitor body measurements from Withings bathroom scales (Body, Body+, Bo
 **API Base URL:** `https://wbsapi.withings.net`
 **Authentication:** OAuth2 Bearer token. Tokens are managed by `withings-auth.sh`. Use `withings-auth.sh token` to get a valid access token (auto-refreshes if expired).
 
-**Important:** Access tokens expire after 3 hours. Refresh tokens expire after 1 year but are rotated on each refresh — the new refresh token MUST be saved immediately or API access is permanently lost until the user re-authorizes.
+**Important:** Access tokens expire after 3 hours. Refresh tokens expire after 1 year but are rotated on each refresh. The new refresh token MUST be saved immediately or you lose API access until the user re-authorizes.
 
 **All weights are in kilograms. All percentages are 0-100.**
 
@@ -36,17 +36,17 @@ These are the default alert thresholds. The user may edit them here to suit thei
 
 ## Error Handling
 
-The API can fail in several ways. Handle each gracefully:
+The API can fail in several ways. Handle each:
 
 ### API errors
 
 | Error | Handling |
 |-------|----------|
-| `status: 401` (Invalid token) | Refresh the token via `withings-auth.sh refresh` and retry once. If refresh also fails, alert: "Withings token expired — re-run `withings-auth.sh setup`." |
+| `status: 401` (Invalid token) | Refresh the token via `withings-auth.sh refresh` and retry once. If refresh also fails, alert: "Withings token expired, re-run `withings-auth.sh setup`." |
 | `status: 503` (Service unavailable) | Wait 60 seconds and retry once. Do not alert the user. |
 | `status: 601` (Too many requests) | Wait 60 seconds and retry once. Do not alert the user. |
-| `status: 2554` (Wrong redirect URI) | Alert: "Withings OAuth config error — check WITHINGS_REDIRECT_URI matches the developer app." |
-| `status: 2555` (Invalid code) | Alert: "Authorization code invalid or expired — re-run `withings-auth.sh setup`." |
+| `status: 2554` (Wrong redirect URI) | Alert: "Withings OAuth config error, check WITHINGS_REDIRECT_URI matches the developer app." |
+| `status: 2555` (Invalid code) | Alert: "Authorization code invalid or expired, re-run `withings-auth.sh setup`." |
 | Connection timeout / network error | Log and skip this check. Alert if it persists across multiple heartbeats. |
 
 ### Common setup issues
@@ -156,7 +156,7 @@ curl -s -X POST https://wbsapi.withings.net/v2/oauth2 \
 }
 ```
 
-**Critical:** The response contains a NEW `refresh_token`. You MUST save it immediately. The old refresh token is invalidated. If you lose the new one, the user must re-authorize.
+**Critical:** The response contains a NEW `refresh_token`. Save it immediately. The old one is invalidated. If you lose the new one, the user has to re-authorize.
 
 ---
 
@@ -181,9 +181,9 @@ scripts/withings-status.sh --json --days 7
 ### 3. Check for errors
 
 If the response indicates an error:
-- **Token expired and refresh failed:** Alert the user — "Withings token expired. Re-run `withings-auth.sh setup`."
+- **Token expired and refresh failed:** Alert the user: "Withings token expired. Re-run `withings-auth.sh setup`."
 - **API unavailable / rate limited:** Skip silently, retry next heartbeat.
-- **No measurements returned:** Check if any measurements exist at all. If the last measurement is older than 7 days, flag as medium alert.
+- **No measurements returned:** Check if anything exists at all. If the last measurement is older than 7 days, flag as medium alert.
 
 ### 4. Parse and evaluate
 
@@ -209,9 +209,9 @@ Calculate the 7-day average weight if multiple measurements are available.
 
 ### 6. Reporting
 
-- **If there is a new measurement since the last heartbeat:** Include a brief summary: weight, body fat %, and any notable changes.
-- **If nothing new:** Do NOT send a message. Avoid noisy "no update" messages.
-- **If an alert condition is detected:** Send the alert regardless of whether there's a new measurement.
+- **New measurement since last heartbeat:** Include a brief summary with weight, body fat %, and any notable changes.
+- **Nothing new:** Do NOT send a message. No noisy "no update" messages.
+- **Alert condition detected:** Send the alert regardless of whether there's a new measurement.
 
 ---
 
@@ -248,16 +248,16 @@ For questions like "how has my weight changed this month?":
 
 ### Convenience scripts
 
-Two helper scripts are available in the skill's parent project:
+Two helper scripts in the skill's parent project:
 
-- **`scripts/withings-auth.sh`** — OAuth2 setup, token refresh, and token retrieval. Run with `setup`, `refresh`, or `token`.
-- **`scripts/withings-status.sh`** — Formatted body measurements. Run with `--raw`, `--json`, or `--days N`.
+- **`scripts/withings-auth.sh`** OAuth2 setup, token refresh, and token retrieval. Run with `setup`, `refresh`, or `token`.
+- **`scripts/withings-status.sh`** Formatted body measurements. Run with `--raw`, `--json`, or `--days N`.
 
 ---
 
 ## Tips
 
-- The Withings API rate limit is 120 requests per minute — not a concern for normal use.
+- The Withings API rate limit is 120 requests per minute, so not a concern for normal use.
 - Measurements sync from the scale to Withings cloud via Wi-Fi. There may be a delay of a few minutes after stepping on the scale.
 - The `category=1` parameter filters for real measurements only (excludes user-set objectives).
 - If `more: 1` in the response, there are additional pages. Use the `offset` value in subsequent requests.

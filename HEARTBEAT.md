@@ -16,13 +16,13 @@ automatic body measurement monitoring on the heartbeat cycle:
 2. Query recent measurements via the Withings API
 3. Parse weight, body fat %, muscle mass, and other body composition data
 4. Check for alert conditions (token failure, stale data)
-5. **Only notify the user if there's a new measurement or something is wrong** — silent otherwise
+5. **Only notify the user if there's a new measurement or something is wrong.** Silent otherwise
 
 ## Alert thresholds
 
 | Condition | Action |
 |-----------|--------|
-| Token refresh failed | Alert immediately — will lose API access |
-| No measurement in 7 days | Medium alert — scale may not be syncing |
-| Weight change > 2kg from 7-day average | Note — include in summary, not an alert |
+| Token refresh failed | Alert immediately (will lose API access) |
+| No measurement in 7 days | Medium alert (scale may not be syncing) |
+| Weight change > 2kg from 7-day average | Note in summary, not an alert |
 | API error (non-transient) | Alert with error details |
